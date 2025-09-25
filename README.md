@@ -32,25 +32,6 @@ A **responsive front-end clone of Spotify** built using **HTML, CSS (or Tailwind
 
 ---
 
-## Folder Structure
-spotify-clone/
-
-│
-├── index.html        # Main HTML file
-
-├── src/
-
-│   └── output.css    # Compiled Tailwind CSS file
-
-├── img/              # Album covers, playlist images, profile pictures
-
-├── audio/            # Audio files for songs/tracks
-
-└── README.md         # Project documentation
-
-
----
-
 ## Future Improvements
 
 - Connect to a backend or API for dynamic playlists and tracks.
