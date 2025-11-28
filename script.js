@@ -4,6 +4,20 @@ let songs = [];
 let currFolder;
 let currentSongIndex = 0;
 
+// Get references to DOM elements instead of relying on global id exposure
+const play = document.getElementById("play");
+const previous = document.getElementById("previous");
+const next = document.getElementById("next");
+
+function makeTrackUrl(folder, track) {
+    // If the track already contains percent escapes like %20, assume it's encoded
+    if (/%[0-9A-Fa-f]{2}/.test(track)) {
+        return `songs/${folder}/${track}`;
+    }
+    // Otherwise, encode the track part properly
+    return `songs/${folder}/${encodeURIComponent(track)}`;
+}
+
 //to time of songs in mm:ss form
 function secondsToMinutesSeconds(seconds) {
     if (isNaN(seconds) || seconds < 0) {
@@ -22,16 +36,34 @@ function secondsToMinutesSeconds(seconds) {
 async function getSongs(folder) {
     currFolder = folder;
     try {
-        let a = await fetch(`songs/${folder}/`)
-        let response = await a.text()
-        let div = document.createElement('div')
-        div.innerHTML = response
-        let as = div.getElementsByTagName("a")
+        // Try to fetch explicit info.json containing tracks first
+        // This avoids relying on directory listing HTML which may not be available on all servers
+        let infoResponse = await fetch(`songs/${folder}/info.json`).catch(() => null);
         songs = [];
-        for (let index = 0; index < as.length; index++) {
-            const element = as[index];
-            if (element.href.endsWith(".mp3")) {
-                songs.push(element.href.split(`songs/${folder}/`)[1])
+        if (infoResponse && infoResponse.ok) {
+            try {
+                let info = await infoResponse.json();
+                // if tracks array is provided in info.json, use it
+                if (Array.isArray(info.tracks) && info.tracks.length > 0) {
+                    songs = info.tracks;
+                }
+            } catch (e) {
+                console.warn(`Failed to parse info.json for folder ${folder}:`, e);
+            }
+        }
+
+        // Fallback to parsing directory HTML if we didn't find tracks in info.json
+        if (songs.length === 0) {
+            let a = await fetch(`songs/${folder}/`);
+            let response = await a.text();
+            let div = document.createElement('div')
+            div.innerHTML = response
+            let as = div.getElementsByTagName("a")
+            for (let index = 0; index < as.length; index++) {
+                const element = as[index];
+                if (element.href.endsWith(".mp3")) {
+                    songs.push(element.href.split(`songs/${folder}/`)[1])
+                }
             }
         }
 
@@ -39,10 +71,13 @@ async function getSongs(folder) {
         let songUL = document.querySelector(".songList").getElementsByTagName("ul")[0]
         songUL.innerHTML = ""
         for (const song of songs) {
+            // Display a user-friendly name while keeping the track filename separate
+            // Use replace instead of replaceAll for wider browser support
+            const displayName = song.replace(/%20/g, " ")
             songUL.innerHTML = songUL.innerHTML + `<li>
                 <img class="invert" src="img/music.svg" alt="">
                 <div class="info">
-                    <div> ${song.replaceAll("%20", " ")}</div>
+                    <div> ${displayName}</div>
                 </div>
                 <div class="playnow">
                     <span>Play Now</span>
@@ -51,10 +86,17 @@ async function getSongs(folder) {
         }
         //for song info
         Array.from(document.querySelector(".songList").getElementsByTagName("li")).forEach((e, index) => {
-            e.addEventListener("click", element => {
-                console.log(e.querySelector(".info").firstElementChild.innerHTML)
-                currentSongIndex = index;
-                playMusic(e.querySelector(".info").firstElementChild.innerHTML.trim())
+                e.addEventListener("click", element => {
+                const displayName = e.querySelector(".info").firstElementChild.innerHTML.trim();
+                // Find the matching track filename from songs array using a simple decode/compare
+                const matchedTrack = songs.find(s => decodeURIComponent(s) === displayName || s === displayName)
+                if (matchedTrack) {
+                    currentSongIndex = index;
+                    playMusic(matchedTrack)
+                } else {
+                    console.warn("Clicked track doesn't match known song filename, trying raw displayName", displayName)
+                    playMusic(displayName)
+                }
             })
         })
         return songs
@@ -66,7 +108,7 @@ async function getSongs(folder) {
 
 //for song info and time
 const playMusic = (track, pause = false) => {
-    currentSong.src = `songs/${currFolder}/` + track
+    currentSong.src = makeTrackUrl(currFolder, track)
     if (!pause) {
         currentSong.play();
         play.src = "img/pause.svg"
@@ -79,23 +121,46 @@ const playMusic = (track, pause = false) => {
 async function displayAlbums() {
     console.log("displaying albums")
     try {
-        let a = await fetch(`songs/`)
-        let response = await a.text();
-        let div = document.createElement('div')
-        div.innerHTML = response;
-        let anchors = div.getElementsByTagName("a")
-        let cardContainer = document.querySelector(".cardContainer")
-        let array = Array.from(anchors)
-        
-        for (let index = 0; index < array.length; index++) {
-            const e = array[index]; 
-            if (e.href.includes("/songs") && !e.href.includes(".htaccess") && e.href.endsWith("/")) {
-                let folder = e.href.split("/").slice(-2)[0]
-                try {
-                    // Get the metadata of the folder
-                    let a = await fetch(`songs/${folder}/info.json`)
-                    let response = await a.json(); 
-                    cardContainer.innerHTML = cardContainer.innerHTML + ` <div data-folder="${folder}" class="card">
+        const cardContainer = document.querySelector(".cardContainer");
+        cardContainer.innerHTML = "";
+
+        // Try to fetch explicit catalog first (recommended to avoid directory listing)
+        const catalogResp = await fetch(`songs/catalog.json`).catch(() => null);
+        let folders = [];
+        if (catalogResp && catalogResp.ok) {
+            try {
+                const catalog = await catalogResp.json();
+                if (Array.isArray(catalog.folders) && catalog.folders.length > 0) {
+                    folders = catalog.folders;
+                }
+            } catch (e) {
+                console.warn('Failed to parse songs/catalog.json, falling back to directory parse', e);
+            }
+        }
+
+        // Fallback to parsing directory listing if the catalog isn't available
+        if (folders.length === 0) {
+            let a = await fetch(`songs/`)
+            let response = await a.text();
+            let div = document.createElement('div')
+            div.innerHTML = response;
+            let anchors = div.getElementsByTagName("a")
+            let array = Array.from(anchors)
+            for (let index = 0; index < array.length; index++) {
+                const e = array[index]; 
+                if (e.href.includes("/songs") && !e.href.includes(".htaccess") && e.href.endsWith("/")) {
+                    let folder = e.href.split("/").slice(-2)[0]
+                    folders.push(folder)
+                }
+            }
+        }
+
+        // Build the card UI for each folder
+        for (const folder of folders) {
+            try {
+                let a = await fetch(`songs/${folder}/info.json`)
+                let response = await a.json(); 
+                cardContainer.innerHTML = cardContainer.innerHTML + ` <div data-folder="${folder}" class="card">
                     <div class="play">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
                             xmlns="http://www.w3.org/2000/svg">
@@ -108,13 +173,14 @@ async function displayAlbums() {
                     <h2>${response.title}</h2>
                     <p>${response.description}</p>
                 </div>`
-                } catch (error) {
-                    console.error(`Error loading info for folder ${folder}:`, error);
-                }
+            } catch (error) {
+                console.error(`Error loading info for folder ${folder}:`, error);
             }
         }
+        console.log(`displayAlbums: built ${folders.length} cards`);
 
         //to load the song
+        // Bind click handlers after the cards are added to the DOM
         Array.from(document.getElementsByClassName("card")).forEach(e => {
             e.addEventListener("click", async item => {
                 console.log("Fetching Songs")
@@ -126,6 +192,9 @@ async function displayAlbums() {
                 }
             })
         })
+        if (document.getElementsByClassName('card').length === 0) {
+            console.warn('displayAlbums: no cards found - check songs/catalog.json or directory listing');
+        }
     } catch (error) {
         console.error("Error displaying albums:", error);
     }

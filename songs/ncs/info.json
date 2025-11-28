@@ -1,4 +1,12 @@
 {
     "title": " No Copyright Songs",
-    "description": " Songs for you"
+    "description": " Songs for you",
+    "tracks": [
+        "Animal BGM-A.R.Rahman.mp3",
+        "Devara BGM-Anirudh Ravichandran.mp3",
+        "Hanuman Chalisa-GowraHari.mp3",
+        "Rolex BGM-Anirudh Ravichandran.mp3",
+        "Ta Takkara-Santosh Narayan.mp3",
+        "THE NIGHTS-Avicii.mp3"
+    ]
 }
